@@ -1,7 +1,6 @@
 /**
- * Font Analyzer for Google Slides
- * This script analyzes fonts used in a Google Slides presentation
- * and creates a summary table on the first slide
+ * Font Analyzer for Google Slides - Version 2
+ * Enhanced version with better font size detection
  */
 
 /**
@@ -10,17 +9,14 @@
  */
 function analyzeFonts(endSlideNumber) {
   try {
-    // Get the active presentation
     const presentation = SlidesApp.getActivePresentation();
     const slides = presentation.getSlides();
     
-    // Determine the range of slides to analyze
     const totalSlides = slides.length;
     const lastSlideToAnalyze = endSlideNumber && endSlideNumber <= totalSlides 
       ? endSlideNumber 
       : totalSlides;
     
-    // Collect font information from each slide
     const fontData = [];
     
     for (let i = 0; i < lastSlideToAnalyze; i++) {
@@ -36,28 +32,26 @@ function analyzeFonts(endSlideNumber) {
       }
     }
     
-    // Create summary table on the first slide
     if (fontData.length > 0) {
       createFontSummaryTable(slides[0], fontData);
       
-      // Show success message
       SlidesApp.getUi().alert(
-        'Font Analysis Complete', 
-        `Analyzed ${lastSlideToAnalyze} slides. Summary table added to the first slide.`,
+        'Анализ завершен', 
+        `Проанализировано ${lastSlideToAnalyze} слайдов. Таблица добавлена на первый слайд.`,
         SlidesApp.getUi().ButtonSet.OK
       );
     } else {
       SlidesApp.getUi().alert(
-        'No Fonts Found', 
-        'No text elements with fonts were found in the analyzed slides.',
+        'Шрифты не найдены', 
+        'В проанализированных слайдах не найдено текстовых элементов со шрифтами.',
         SlidesApp.getUi().ButtonSet.OK
       );
     }
     
   } catch (error) {
     SlidesApp.getUi().alert(
-      'Error', 
-      `An error occurred: ${error.toString()}`,
+      'Ошибка', 
+      `Произошла ошибка: ${error.toString()}`,
       SlidesApp.getUi().ButtonSet.OK
     );
   }
@@ -65,87 +59,138 @@ function analyzeFonts(endSlideNumber) {
 
 /**
  * Analyze fonts in a single slide
- * @param {Slide} slide - The slide to analyze
- * @param {number} slideNumber - The slide number
- * @returns {Array} Array of font information objects
  */
 function analyzeSlidesFonts(slide, slideNumber) {
   const fontMap = new Map();
   const pageElements = slide.getPageElements();
   
   pageElements.forEach(element => {
-    // Check if element contains text
-    if (element.getPageElementType() === SlidesApp.PageElementType.SHAPE ||
-        element.getPageElementType() === SlidesApp.PageElementType.TABLE) {
-      
+    const elementType = element.getPageElementType();
+    
+    // Process shapes and text boxes
+    if (elementType === SlidesApp.PageElementType.SHAPE) {
       try {
-        const textRange = element.asShape().getText();
-        if (textRange) {
-          extractFontInfo(textRange, fontMap);
+        const shape = element.asShape();
+        if (shape.getText) {
+          const textRange = shape.getText();
+          if (textRange && textRange.asString().trim() !== '') {
+            extractFontInfoV2(textRange, fontMap);
+          }
         }
       } catch (e) {
-        // Handle table elements
-        if (element.getPageElementType() === SlidesApp.PageElementType.TABLE) {
-          const table = element.asTable();
-          const numRows = table.getNumRows();
-          const numCols = table.getNumColumns();
-          
-          for (let row = 0; row < numRows; row++) {
-            for (let col = 0; col < numCols; col++) {
-              try {
-                const cell = table.getCell(row, col);
-                const textRange = cell.getText();
-                if (textRange) {
-                  extractFontInfo(textRange, fontMap);
-                }
-              } catch (cellError) {
-                // Skip problematic cells
+        console.log('Error processing shape:', e);
+      }
+    }
+    
+    // Process tables
+    else if (elementType === SlidesApp.PageElementType.TABLE) {
+      try {
+        const table = element.asTable();
+        const numRows = table.getNumRows();
+        const numCols = table.getNumColumns();
+        
+        for (let row = 0; row < numRows; row++) {
+          for (let col = 0; col < numCols; col++) {
+            try {
+              const cell = table.getCell(row, col);
+              const textRange = cell.getText();
+              if (textRange && textRange.asString().trim() !== '') {
+                extractFontInfoV2(textRange, fontMap);
               }
+            } catch (cellError) {
+              console.log('Error processing cell:', cellError);
             }
           }
         }
+      } catch (e) {
+        console.log('Error processing table:', e);
       }
     }
   });
   
-  // Convert map to array
+  // Convert map to array and filter out empty entries
   const fontsArray = [];
   fontMap.forEach((sizes, fontFamily) => {
-    fontsArray.push({
-      fontFamily: fontFamily,
-      sizes: Array.from(sizes).sort((a, b) => a - b)
-    });
+    if (sizes.size > 0) {
+      fontsArray.push({
+        fontFamily: fontFamily,
+        sizes: Array.from(sizes).sort((a, b) => a - b)
+      });
+    }
   });
   
   return fontsArray;
 }
 
 /**
- * Extract font information from a text range
- * @param {TextRange} textRange - The text range to analyze
- * @param {Map} fontMap - Map to store font information
+ * Enhanced font extraction with better error handling
  */
-function extractFontInfo(textRange, fontMap) {
-  const runs = textRange.getRuns();
-  
-  runs.forEach(run => {
-    const textStyle = run.getTextStyle();
-    const fontFamily = textStyle.getFontFamily() || 'Default';
-    const fontSize = textStyle.getFontSize();
+function extractFontInfoV2(textRange, fontMap) {
+  try {
+    // Get all paragraphs
+    const paragraphs = textRange.getParagraphs();
     
-    if (fontSize) {
-      if (!fontMap.has(fontFamily)) {
-        fontMap.set(fontFamily, new Set());
+    paragraphs.forEach(paragraph => {
+      const paragraphText = paragraph.getRange();
+      
+      // Try to get runs
+      try {
+        const runs = paragraphText.getRuns();
+        
+        runs.forEach(run => {
+          if (run.getLength() === 0) return;
+          
+          const textStyle = run.getTextStyle();
+          let fontFamily = 'Default';
+          let fontSize = 11; // Default size
+          
+          // Get font family
+          try {
+            fontFamily = textStyle.getFontFamily() || 'Default';
+          } catch (e) {
+            console.log('Could not get font family');
+          }
+          
+          // Get font size - try multiple approaches
+          try {
+            const fontSizeObj = textStyle.getFontSize();
+            if (fontSizeObj) {
+              fontSize = fontSizeObj.getMagnitude ? fontSizeObj.getMagnitude() : fontSizeObj;
+            }
+          } catch (e) {
+            // If that fails, use default
+            console.log('Using default font size');
+          }
+          
+          // Add to map
+          if (!fontMap.has(fontFamily)) {
+            fontMap.set(fontFamily, new Set());
+          }
+          fontMap.get(fontFamily).add(Math.round(fontSize));
+        });
+      } catch (e) {
+        // If runs fail, try to get style from the whole paragraph
+        try {
+          const textStyle = paragraphText.getTextStyle();
+          const fontFamily = textStyle.getFontFamily() || 'Default';
+          const fontSize = 11; // Default if we can't get it
+          
+          if (!fontMap.has(fontFamily)) {
+            fontMap.set(fontFamily, new Set());
+          }
+          fontMap.get(fontFamily).add(fontSize);
+        } catch (e2) {
+          console.log('Could not extract font info from paragraph');
+        }
       }
-      fontMap.get(fontFamily).add(fontSize.getMagnitude());
-    }
-  });
+    });
+  } catch (e) {
+    console.log('Error in extractFontInfoV2:', e);
+  }
 }
 
 /**
  * Create a summary table on the first slide
- * @param {Slide} firstSlide - The first slide where the table will be added
- * @param {Array} fontData - Array of font data for each slide
  */
 function createFontSummaryTable(firstSlide, fontData) {
   // Calculate table dimensions
@@ -154,16 +199,20 @@ function createFontSummaryTable(firstSlide, fontData) {
     totalRows += slideData.fonts.length;
   });
   
-  // Create table
-  const table = firstSlide.insertTable(totalRows, 3, 10, 10, 500, 20 * totalRows);
+  // Create table with better positioning
+  const presentation = SlidesApp.getActivePresentation();
+  const slideWidth = presentation.getPageWidth();
+  const tableWidth = Math.min(500, slideWidth - 20);
+  const rowHeight = 25;
+  const table = firstSlide.insertTable(totalRows, 3, 10, 10, tableWidth, rowHeight * totalRows);
   
   // Style header row
   const headerRow = table.getRow(0);
-  headerRow.getCell(0).getText().setText('Slide #').getTextStyle()
+  headerRow.getCell(0).getText().setText('Слайд №').getTextStyle()
     .setBold(true).setFontSize(12);
-  headerRow.getCell(1).getText().setText('Font Family').getTextStyle()
+  headerRow.getCell(1).getText().setText('Шрифт').getTextStyle()
     .setBold(true).setFontSize(12);
-  headerRow.getCell(2).getText().setText('Font Sizes (pt)').getTextStyle()
+  headerRow.getCell(2).getText().setText('Размеры (pt)').getTextStyle()
     .setBold(true).setFontSize(12);
   
   // Fill table with font data
@@ -172,30 +221,39 @@ function createFontSummaryTable(firstSlide, fontData) {
     const slideNumber = slideData.slideNumber;
     
     slideData.fonts.forEach((fontInfo, index) => {
-      const row = table.getRow(currentRow);
-      
-      // Only show slide number for the first font of each slide
-      if (index === 0) {
-        row.getCell(0).getText().setText(`Slide ${slideNumber}`);
+      if (currentRow < totalRows) {
+        const row = table.getRow(currentRow);
+        
+        // Only show slide number for the first font of each slide
+        if (index === 0) {
+          row.getCell(0).getText().setText(`Слайд ${slideNumber}`);
+        }
+        
+        row.getCell(1).getText().setText(fontInfo.fontFamily);
+        row.getCell(2).getText().setText(fontInfo.sizes.join(', ') + ' pt');
+        
+        currentRow++;
       }
-      
-      row.getCell(1).getText().setText(fontInfo.fontFamily);
-      row.getCell(2).getText().setText(fontInfo.sizes.join(', '));
-      
-      currentRow++;
     });
   });
   
   // Style the table
-  for (let i = 0; i < totalRows; i++) {
-    for (let j = 0; j < 3; j++) {
-      const cell = table.getCell(i, j);
-      cell.getFill().setSolidFill('#f8f9fa');
-      cell.getBorder().getTop().setWeight(1);
-      cell.getBorder().getBottom().setWeight(1);
-      cell.getBorder().getLeft().setWeight(1);
-      cell.getBorder().getRight().setWeight(1);
+  try {
+    for (let i = 0; i < totalRows; i++) {
+      for (let j = 0; j < 3; j++) {
+        const cell = table.getCell(i, j);
+        if (i === 0) {
+          // Header row
+          cell.getFill().setSolidFill('#4285f4');
+          cell.getText().getTextStyle().setForegroundColor('#ffffff');
+        } else {
+          // Data rows
+          cell.getFill().setSolidFill(i % 2 === 0 ? '#f8f9fa' : '#ffffff');
+        }
+      }
     }
+  } catch (e) {
+    console.log('Could not style table cells:', e);
   }
 }
 
@@ -207,7 +265,7 @@ function showAnalyzerDialog() {
       .setWidth(400)
       .setHeight(200);
   SlidesApp.getUi()
-      .showModalDialog(html, 'Font Analyzer Settings');
+      .showModalDialog(html, 'Настройки анализа шрифтов');
 }
 
 /**
@@ -215,9 +273,9 @@ function showAnalyzerDialog() {
  */
 function onOpen() {
   SlidesApp.getUi()
-      .createMenu('Font Analyzer')
-      .addItem('Analyze Fonts', 'showAnalyzerDialog')
-      .addItem('Analyze All Slides', 'analyzeAllSlides')
+      .createMenu('Анализ шрифтов')
+      .addItem('Анализировать шрифты', 'showAnalyzerDialog')
+      .addItem('Анализировать все слайды', 'analyzeAllSlides')
       .addToUi();
 }
 
@@ -226,4 +284,35 @@ function onOpen() {
  */
 function analyzeAllSlides() {
   analyzeFonts();
+}
+
+/**
+ * Debug function to test font detection
+ */
+function debugFontDetection() {
+  const presentation = SlidesApp.getActivePresentation();
+  const slide = presentation.getSlides()[0];
+  const elements = slide.getPageElements();
+  
+  console.log(`Found ${elements.length} elements on first slide`);
+  
+  elements.forEach((element, index) => {
+    console.log(`Element ${index}: ${element.getPageElementType()}`);
+    
+    if (element.getPageElementType() === SlidesApp.PageElementType.SHAPE) {
+      try {
+        const shape = element.asShape();
+        const text = shape.getText();
+        console.log(`Text content: "${text.asString()}"`);
+        
+        const runs = text.getRuns();
+        runs.forEach((run, runIndex) => {
+          const style = run.getTextStyle();
+          console.log(`Run ${runIndex}: Font=${style.getFontFamily()}, Size=${style.getFontSize()}`);
+        });
+      } catch (e) {
+        console.log(`Error processing element ${index}:`, e);
+      }
+    }
+  });
 }
